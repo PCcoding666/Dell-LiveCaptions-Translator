@@ -120,6 +120,7 @@ struct HistoryView: View {
                     }
                 }
             }
+            .disabled(!viewModel.settings.historyEnabled)
             .padding()
         }
         .frame(width: 650, height: 550)
@@ -174,6 +175,11 @@ struct HistoryView: View {
     }
     
     private func loadHistory() async {
+        guard viewModel.settings.historyEnabled else {
+            persistentEntries = []
+            isLoading = false
+            return
+        }
         isLoading = true
         persistentEntries = await viewModel.loadPersistentHistory(limit: 500)
         isLoading = false
