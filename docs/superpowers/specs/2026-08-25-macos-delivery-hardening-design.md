@@ -14,7 +14,7 @@ Signing/packaging:
 - `macos/package-app.sh:30-37` signs with local identity `LCT Dev` or falls back to ad-hoc; **no `--options runtime`, no `--entitlements`**.
 - `macos/Scripts/build-app.sh:56-63` ad-hoc with entitlements; `macos/Scripts/build_signed.sh:33-55` signs the bare executable (not the bundle) — three divergent paths.
 - No `notarytool`/`stapler`/notarization anywhere in the repo. No DMG (`hdiutil`/`create-dmg`) anywhere, yet `macos/QUICK_START.md`, `USER_MANUAL.md`, `USER_GUIDE.md` promise a `.dmg`.
-- `macos/LCTMac/Info.plist:34-36` contains a misplaced entitlement key (`com.apple.security.device.audio-input`); `NSScreenCaptureUsageDescription` is missing.
+- `macos/LCTMac/Info.plist:34-36` contains a misplaced entitlement key (`com.apple.security.device.audio-input`). No screen-capture usage-description key is required: the app's capture APIs (`CGPreflightScreenCaptureAccess`, `CGRequestScreenCaptureAccess`, `SCShareableContent`) use system-managed TCC authorization; `NSScreenCaptureUsageDescription` is not consulted for them on the macOS 15 target.
 - Versioning: only `package-app.sh:19-23` stamps `CFBundleShortVersionString` (`git describe --tags`, fallback `0.1.0` — non-semver, can carry dirty suffixes) and `CFBundleVersion` (commit count). `SettingsView.swift:371-372` reads both at runtime.
 
 CI:
@@ -53,8 +53,8 @@ Docs/legal:
 |---|---|---|
 | Canonical packaging path | Single `macos/package-app.sh` pipeline; `Scripts/build-app.sh` and `Scripts/build_signed.sh` reduced to thin wrappers or deleted | Eliminates the three divergent sign paths that caused the ad-hoc release |
 | Signing model | Release: Developer ID Application identity + `--options runtime` + `--entitlements LCTMac/LCTMac.entitlements`. Local dev: keep ad-hoc with `--options runtime --entitlements` so local Gatekeeper behavior matches release | Hardened runtime is mandatory for notarization |
-| Notarization | `xcrun notarytool submit --wait` (zip payload), then `xcrun stapler staple` on `.app` and DMG | Standard Apple flow; stapling lets offline Gatekeeper pass |
-| DMG | `hdiutil create` (read-only, UDZO) with symlink-to-/Applications layout; signed + notarized + stapled alongside the app | No third-party tooling needed |
+| Notarization | Sign the `.app`, build the DMG, then submit the **final DMG** (`xcrun notarytool submit --wait`; accepted carriers are `.zip`/`.dmg`/`.pkg`) and `xcrun stapler staple` the **DMG** — the carrier that ships. A ZIP carrier cannot be stapled; for the ZIP artifact the app is stapled inside it instead | Apple's flow staples the distributed installer; stapling lets offline Gatekeeper pass |
+| DMG | `hdiutil create` (read-only, UDZO) with symlink-to-/Applications layout; **not codesigned** (the DMG is not a usual codesign target — Gatekeeper evaluates the Developer ID app inside); notarized and stapled as the submission carrier | No third-party tooling needed |
 | Versioning | `CFBundleShortVersionString` from latest semver tag (must match `^[0-9]+\.[0-9]+\.[0-9]+$`; strip `v`); `CFBundleVersion` = `git rev-list --count HEAD`. Fallback for no tag: `0.1.0`. One shared `macos/Scripts/version-stamp.sh` used by all build scripts | Deterministic, semantic, monotonic; fixes non-semver `git describe` output |
 | CI gate | On `v*` tags: require `MACOS_CERTIFICATE`, `MACOS_CERTIFICATE_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` — missing any ⇒ workflow fails before release. Branch/PR runs: test + ad-hoc package only | A release must never ship unsigned/un-notarized again |
 | Test ordering | `swift test` (and warnings-as-errors build) runs **before** any packaging step in CI and in `Scripts/run_tests.sh` (already does) | Required outcome 5 |
@@ -62,11 +62,11 @@ Docs/legal:
 | Log redaction | Remove transcript text from `SpeechAnalyzerService.swift:236` (log length/isFinal only); audit all `appLog`/`print` sites for content; diagnostics export then text-free by construction | Simpler and safer than redaction filters |
 | Remote Ollama | `ollamaURL` computed property picks scheme: loopback ⇒ `http://`; non-loopback ⇒ `https://` only. New `remoteOllamaOptIn: Bool = false`; non-loopback host rejected in Settings validation unless opt-in checked; warning banner explains HTTPS requirement | Required outcome 8; no cleartext off-machine traffic |
 | ASR claim | Fix `WelcomeView.swift:169` copy to describe on-device-by-default-with-optional-network, or set `requiresOnDeviceRecognition = true` — decide in docs task; default: correct the copy and document | Docs/legal accuracy |
-| Entitlements/plist | Remove misplaced entitlement key from `Info.plist`; add `NSScreenCaptureUsageDescription` | Correctness; notarization rejects oddities |
+| Entitlements/plist | Remove misplaced entitlement key from `Info.plist`; do **not** add `NSScreenCaptureUsageDescription` — the app's capture APIs (`CGPreflightScreenCaptureAccess`, `CGRequestScreenCaptureAccess`, `SCShareableContent`) use system-managed TCC authorization that never reads a usage-description key on the macOS 15 target | Correctness; avoids shipping a dead/unused key |
 
 ## 5. External blocker (Apple credentials)
 
-Signing/notarization cannot be validated end-to-end without Apple-side assets that do not exist yet:
+The items below are the **sole external launch blocker** for the first notarized release; everything else in this program is implementable and testable in-repo. Signing/notarization cannot be validated end-to-end without Apple-side assets that do not exist yet:
 1. Apple Developer Program membership with a **Developer ID Application** certificate (exported as `.p12` → `MACOS_CERTIFICATE` base64 secret + `MACOS_CERTIFICATE_PASSWORD`).
 2. App-specific password for the Apple ID → `APPLE_APP_SPECIFIC_PASSWORD`.
 3. `APPLE_ID` and `APPLE_TEAM_ID`.

@@ -8,9 +8,9 @@ Method: TDD — for every task, write/extend a failing test first, commit nothin
 
 ## External blocker (recorded, non-blocking for code)
 
-Real Developer ID signing + notarization requires Apple assets that do not exist yet:
+The five Apple secrets below are the **sole external launch blocker** for the first notarized release; no other external dependency exists. Real Developer ID signing + notarization requires Apple assets that do not exist yet:
 `MACOS_CERTIFICATE` (base64 .p12), `MACOS_CERTIFICATE_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`.
-All P0 code is implemented and tested via local/ad-hoc paths; the CI release gate fails loudly until the owner adds these secrets. Final notarized release is a manual smoke test (task T7) after credentials land.
+All P0 code is implemented and tested via local/ad-hoc paths; the CI release gate fails loudly until the owner adds these secrets. Final notarized release is a manual smoke test (task T8) after credentials land.
 
 ## Baseline commands (run before and after every task)
 
@@ -24,8 +24,8 @@ swift test
 
 ### T1. Entitlements + Info.plist hygiene
 - Files: `macos/LCTMac/Info.plist`, `macos/LCTMac/LCTMac.entitlements`
-- Remove misplaced `com.apple.security.device.audio-input` key from `Info.plist` (lines 34–36); add `NSScreenCaptureUsageDescription`. Keep entitlements only in `LCTMac.entitlements` (audio-input, network.client, allow-unsigned-executable-memory, app-sandbox=false).
-- Test first: add `Tests/LCTMacTests/InfoPlistTests.swift` — parse `LCTMac/Info.plist` and assert: no `com.apple.security.*` keys present, `NSScreenCaptureUsageDescription` non-empty, `CFBundleIdentifier == "com.lct.mac"`.
+- Remove misplaced `com.apple.security.device.audio-input` key from `Info.plist` (lines 34–36). Do **not** add `NSScreenCaptureUsageDescription`: the app's capture APIs (`CGPreflightScreenCaptureAccess`, `CGRequestScreenCaptureAccess`, `SCShareableContent`) use system-managed TCC authorization that never reads a usage-description key on the macOS 15 target. Keep entitlements only in `LCTMac.entitlements` (audio-input, network.client, allow-unsigned-executable-memory, app-sandbox=false).
+- Test first: add `Tests/LCTMacTests/InfoPlistTests.swift` — parse `LCTMac/Info.plist` and assert: no `com.apple.security.*` keys present, no `NSScreenCaptureUsageDescription` key present (guard against adding a dead key), `CFBundleIdentifier == "com.lct.mac"`.
 - Accept: `swift test --filter InfoPlistTests`; `plutil -lint macos/LCTMac/Info.plist`.
 - Commit: `fix(macos): clean Info.plist and entitlements for notarization`
 
@@ -43,23 +43,23 @@ swift test
 - Accept: `cd macos && ./package-app.sh && swift test --filter SigningTests`; `codesign --verify --strict --verbose=2 LCTMac.app`.
 - Commit: `feat(macos): hardened-runtime signing with entitlements in canonical package path`
 
-### T4. Notarization + stapling scripts
-- Files: new `macos/Scripts/notarize.sh`; modify `macos/package-app.sh` to call it when `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` are all set (skip with clear message otherwise for local runs).
-- Flow: zip app ⇒ `xcrun notarytool submit LCTMac-notarize.zip --apple-id --password --team-id --wait` ⇒ on success `xcrun notarytool log` fetched on failure, `xcrun stapler staple LCTMac.app`.
-- Test first: add `Tests/LCTMacTests/NotarizeScriptTests.swift` — dry-run mode of `Scripts/notarize.sh --dry-run` asserts correct command construction and that it aborts (non-zero) when any credential env var is missing.
-- Accept: `swift test --filter NotarizeScriptTests`.
-- Commit: `feat(macos): notarytool notarization and stapling script`
-
-### T5. DMG artifact
-- Files: new `macos/Scripts/make-dmg.sh`; called from `package-app.sh` after signing/stapling.
-- Behavior: `hdiutil create` UDZO read-only DMG containing `LCTMac.app` + `/Applications` symlink layout; DMG itself codesigned and stapled. Output `LCTMac-{version}.dmg` and `LCTMac-{version}-macOS.zip`.
-- Test first: extend `SigningTests.swift` — DMG exists, `hdiutil verify` passes, `codesign --verify` on the DMG passes, mounted volume contains app + Applications symlink.
+### T4. DMG artifact (not codesigned)
+- Files: new `macos/Scripts/make-dmg.sh`; called from `package-app.sh` after the app is signed.
+- Behavior: `hdiutil create` UDZO read-only DMG containing the signed `LCTMac.app` + `/Applications` symlink layout. The DMG is **not codesigned** — it is not a usual codesign target; Gatekeeper evaluates the Developer ID app inside. Output `LCTMac-{version}.dmg`.
+- Test first: extend `SigningTests.swift` — DMG exists, `hdiutil verify` passes, mounted volume contains app + Applications symlink.
 - Accept: `swift test --filter SigningTests`; `hdiutil verify macos/LCTMac-*.dmg`.
-- Commit: `feat(macos): signed, stapled DMG release artifact`
+- Commit: `feat(macos): unsigned read-only DMG release artifact`
+
+### T5. Notarization + stapling (DMG as submission carrier)
+- Files: new `macos/Scripts/notarize.sh`; modify `macos/package-app.sh` to call it after the DMG is built, when `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` are all set (skip with clear message otherwise for local runs).
+- Flow: `xcrun notarytool submit LCTMac-{version}.dmg --apple-id ... --password ... --team-id ... --wait` — the final DMG is the submission carrier (notarytool accepts `.zip`/`.dmg`/`.pkg`) ⇒ on failure fetch `xcrun notarytool log <submission-id>` ⇒ on success `xcrun stapler staple LCTMac-{version}.dmg` (DMG is a stapler-supported carrier) + `xcrun stapler validate` ⇒ then build `LCTMac-{version}-macOS.zip` containing a stapled app: extract the app from the stapled DMG, `xcrun stapler staple LCTMac.app`, zip with `ditto -c -k --sequesterRsrc --keepParent`. The ZIP carrier itself is **not** staplable — the stapled app travels inside it.
+- Test first: add `Tests/LCTMacTests/NotarizeScriptTests.swift` — dry-run mode of `Scripts/notarize.sh --dry-run` asserts correct command construction (submit and staple target the DMG; ZIP is built afterwards from the stapled app; no `codesign` on the DMG) and that it aborts (non-zero) when any credential env var is missing.
+- Accept: `swift test --filter NotarizeScriptTests`.
+- Commit: `feat(macos): notarytool notarization and stapling with DMG carrier`
 
 ### T6. Gatekeeper validation script
 - Files: new `macos/Scripts/verify-gatekeeper.sh`.
-- Behavior: `spctl --assess --type execute --verbose=4 LCTMac.app` (expected to pass only with Developer ID; ad-hoc local runs assert `codesign --verify --strict` + entitlements instead and print a warning), `xcrun stapler validate` when stapled, quarantine simulation: `xattr -w com.apple.quarantine` then `spctl --assess`.
+- Behavior: on the shipped carrier — `xcrun stapler validate LCTMac-{version}.dmg`; mount the DMG and assess the app inside (`spctl --assess --type execute --verbose=4`, `codesign --verify --strict`) since Gatekeeper evaluates the app, not the DMG; quarantine simulation of a fresh download: `xattr -w com.apple.quarantine` on the app copy, then `spctl --assess` again. Ad-hoc local runs skip `spctl` (it only passes Developer ID), assert `codesign --verify --strict` + entitlements instead, and print a warning.
 - Test first: `Tests/LCTMacTests/GatekeeperTests.swift` drives the script in ad-hoc mode and asserts exit 0 plus expected output markers.
 - Accept: `swift test --filter GatekeeperTests`; `bash macos/Scripts/verify-gatekeeper.sh`.
 - Commit: `feat(macos): automated Gatekeeper validation script`
@@ -71,12 +71,12 @@ swift test
   2. On `v*` tags: step that fails (`exit 1` with message) unless `MACOS_CERTIFICATE`, `MACOS_CERTIFICATE_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` are all present. Import cert into temp keychain, run `package-app.sh` with signing env, notarize, staple, verify-gatekeeper.
   3. Release job uploads `LCTMac-{version}.dmg`, `LCTMac-{version}-macOS.zip`, and `LICENSE` as release notes attachment; keeps `softprops/action-gh-release@v2`.
   4. Branch/PR runs keep ad-hoc packaging + artifact upload.
-- Test: workflow YAML lint (`python3 -c "import yaml,sys; yaml.safe_load(open('.github/workflows/macos-build.yml'))"`); dry-run tag behavior verified in T8 smoke test.
+- Test: workflow YAML lint **without undeclared dependencies** (PyYAML is neither declared nor guaranteed on runners): `ruby -ryaml -e 'YAML.load_file(ARGV[0])' .github/workflows/macos-build.yml` (Ruby stdlib ships on GitHub-hosted macos/ubuntu runners); dry-run tag behavior verified in T8 smoke test.
 - Accept: YAML parses; local simulation `TAG=v0.0.1 bash macos/Scripts/ci-simulate.sh` (small helper added in this task) fails without secrets.
 - Commit: `ci(macos): test before package; fail release tags without signing/notarization secrets`
 
 ### T8. Manual notarized-release smoke test (blocked on Apple credentials)
-- No code. Owner adds the five secrets; push tag `v{next}`; verify: workflow passes, `spctl --assess` passes on downloaded DMG app, `stapler validate` passes, Gatekeeper opens cleanly on a clean Mac.
+- No code. Owner adds the five secrets; push tag `v{next}`; verify: workflow passes; on the downloaded DMG (download so the browser sets the quarantine xattr) `xcrun stapler validate` passes — the stapled ticket travels with the carrier; after mounting, `spctl --assess --type execute` passes on the app inside and Gatekeeper opens it cleanly on a clean Mac, including offline (stapled ticket, no online lookup).
 - Record outcome in the PR description. If secrets unavailable, this task stays open and is explicitly labeled blocked.
 - No commit (or empty-note commit only if orchestrator requires).
 
@@ -102,7 +102,7 @@ swift test
 
 ### T12. Docs, legal, onboarding, hotkey accuracy
 - Files: `macos/QUICK_START.md`, `macos/USER_GUIDE.md`, `macos/USER_MANUAL.md`, root `docs/USER_GUIDE.md`, `macos/TESTING.md`, `macos/LCTMac/Views/WelcomeView.swift` (line 169 claim), new `docs/PRIVACY.md`.
-- Changes: DMG install instructions match the real artifact names from T5; correct "all processing on device" claim (document that ASR may use Apple network recognition); document history-off default, log text-freedom, remote-Ollama HTTPS opt-in; refresh `TESTING.md` coverage table to the real 9 test files; hotkey doc section lists the actual bindings from the global-hotkeys implementation; add `PRIVACY.md` linked from README and Settings diagnostics section; state that `LICENSE` ships in the app bundle and release assets.
+- Changes: DMG install instructions match the real artifact names from T4/T5; correct "all processing on device" claim (document that ASR may use Apple network recognition); document history-off default, log text-freedom, remote-Ollama HTTPS opt-in; refresh `TESTING.md` coverage table to the real 9 test files; hotkey doc section lists the actual bindings from the global-hotkeys implementation; add `PRIVACY.md` linked from README and Settings diagnostics section; state that `LICENSE` ships in the app bundle and release assets.
 - Test: link/file reference check script `bash macos/Scripts/check-docs.sh` (added here) fails on references to nonexistent files/artifacts.
 - Commit: `docs(macos): align install, privacy, onboarding, and hotkey docs with shipping behavior`
 
@@ -136,7 +136,7 @@ Each task = one PR-sized commit; tasks are independently testable via their name
 
 ## Definition of done (program-level)
 
-1. `v*` tag with secrets present ⇒ DMG + ZIP, Developer ID signed, hardened runtime, notarized, stapled, `spctl --assess` pass; without secrets ⇒ workflow fails before any release asset exists.
+1. `v*` tag with secrets present ⇒ DMG + ZIP, Developer ID signed, hardened runtime, notarized, stapled DMG carrier (ZIP contains the stapled app; ZIP itself is not staplable), `spctl --assess` pass on the app; without secrets ⇒ workflow fails before any release asset exists.
 2. `swift test` green with warnings-as-errors build; tests run before packaging in CI.
 3. Fresh install has history recording OFF; logs and diagnostics contain zero spoken/translated text; remote Ollama impossible without HTTPS + opt-in.
 4. All macOS docs match shipping artifacts and behavior; LICENSE in bundle and release.
