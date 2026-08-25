@@ -685,10 +685,22 @@ struct WelcomeView: View {
             return
         }
 
-        guard let url = URL(string: "\(config.baseURL)/api/tags") else {
-            setupError = "Invalid remote Ollama URL."
+        // Remote connections require the explicit opt-in already enabled in
+        // Settings; it is never inferred or enabled here.
+        let settings = AppSettings.load()
+        let endpoint: OllamaEndpoint
+        do {
+            endpoint = try OllamaEndpoint.validated(
+                host: config.host,
+                port: config.port,
+                remoteOptIn: settings.remoteOllamaOptIn
+            )
+        } catch {
+            setupError = error.localizedDescription
             return
         }
+
+        let url = endpoint.baseURL.appendingPathComponent("api/tags")
 
         var request = URLRequest(url: url)
         request.timeoutInterval = 8
@@ -708,7 +720,7 @@ struct WelcomeView: View {
                 return
             }
 
-            var settings = AppSettings.load()
+            var settings = settings
             settings.ollamaHost = config.host
             settings.ollamaPort = config.port
             settings.ollamaModel = config.model

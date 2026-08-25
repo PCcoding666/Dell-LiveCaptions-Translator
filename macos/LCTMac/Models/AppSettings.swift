@@ -159,6 +159,11 @@ struct AppSettings: Codable, Equatable {
     // MARK: - Ollama Settings
     var ollamaHost: String = "localhost"
     var ollamaPort: Int = 11434
+    /// Explicit consent to connect to a non-loopback Ollama server. Defaults
+    /// to false; a missing key (older installs) decodes as disabled. Only the
+    /// dedicated Settings toggle may enable it — never inferred from the host.
+    /// Remote endpoints are constructed and requested over HTTPS only.
+    var remoteOllamaOptIn: Bool = false
     var ollamaModel: String = "qwen3.5:4b-mlx"
     var ollamaTimeout: Int = 30
     var ollamaTemperature: Double = 0.3
@@ -198,8 +203,26 @@ struct AppSettings: Codable, Equatable {
 
     // MARK: - Computed Properties
 
+    /// The validated Ollama endpoint, or nil when the configuration is
+    /// invalid (malformed host/port, or remote without consent).
+    var validatedOllamaEndpoint: OllamaEndpoint? {
+        try? OllamaEndpoint.validated(host: ollamaHost, port: ollamaPort, remoteOptIn: remoteOllamaOptIn)
+    }
+
+    /// Human-readable reason the current Ollama configuration is invalid, if so.
+    var ollamaEndpointError: String? {
+        do {
+            _ = try OllamaEndpoint.validated(host: ollamaHost, port: ollamaPort, remoteOptIn: remoteOllamaOptIn)
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    /// Base URL for the configured endpoint. Invalid configurations yield a
+    /// non-requestable sentinel so no network request can be constructed.
     var ollamaURL: String {
-        "http://\(ollamaHost):\(ollamaPort)"
+        validatedOllamaEndpoint?.baseURL.absoluteString ?? "lct-invalid://endpoint-disabled"
     }
 
     var ollamaAPIEndpoint: String {
@@ -207,14 +230,7 @@ struct AppSettings: Codable, Equatable {
     }
 
     var isLocalOllama: Bool {
-        let host = ollamaHost
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-
-        return host == "localhost"
-            || host == "127.0.0.1"
-            || host == "::1"
-            || host == "[::1]"
+        validatedOllamaEndpoint?.isLoopback ?? true
     }
 
     // MARK: - Persistence
@@ -302,6 +318,7 @@ extension AppSettings {
         sourceLanguage = try container.decodeIfPresent(SourceLanguage.self, forKey: .sourceLanguage) ?? .english
         ollamaHost = try container.decodeIfPresent(String.self, forKey: .ollamaHost) ?? "localhost"
         ollamaPort = try container.decodeIfPresent(Int.self, forKey: .ollamaPort) ?? 11434
+        remoteOllamaOptIn = try container.decodeIfPresent(Bool.self, forKey: .remoteOllamaOptIn) ?? false
         ollamaModel = try container.decodeIfPresent(String.self, forKey: .ollamaModel) ?? "qwen3.5:4b-mlx"
         ollamaTimeout = try container.decodeIfPresent(Int.self, forKey: .ollamaTimeout) ?? 30
         ollamaTemperature = try container.decodeIfPresent(Double.self, forKey: .ollamaTemperature) ?? 0.3

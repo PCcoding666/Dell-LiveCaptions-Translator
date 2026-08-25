@@ -199,6 +199,14 @@ class TranscriptionViewModel: ObservableObject {
         do {
             notice = nil
 
+            // Fail closed on an invalid or non-consented Ollama endpoint before
+            // any service is started or request can be made.
+            if let endpointError = settings.ollamaEndpointError {
+                appLog("[TranscriptionVM] ❌ Invalid Ollama endpoint: \(endpointError)")
+                notice = .error("Ollama configuration is invalid: \(endpointError)", actions: [.openAppSettings])
+                return
+            }
+
             // Check if we need screen capture (system audio) or just microphone
             let needsScreenCapture = settings.captureSystemAudio
             appLog("[TranscriptionVM] needsScreenCapture: \(needsScreenCapture)")

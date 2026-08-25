@@ -37,6 +37,8 @@ struct SettingsView: View {
                     dismiss()
                 }
                 .buttonStyle(.borderedProminent)
+                .disabled(localSettings.ollamaEndpointError != nil)
+                .help(localSettings.ollamaEndpointError ?? "")
             }
             .padding()
 
@@ -191,6 +193,23 @@ struct SettingsView: View {
                     Spacer()
                 }
 
+                Toggle("Allow Remote Ollama (HTTPS only)", isOn: $localSettings.remoteOllamaOptIn)
+                    .help("Explicit consent required before connecting to a non-local Ollama server. Remote servers are only contacted over HTTPS.")
+
+                Text("Local servers (localhost/127.0.0.1) use HTTP. Remote servers require this explicit opt-in and are only contacted over HTTPS.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if let endpointError = localSettings.ollamaEndpointError {
+                    HStack {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                        Text(endpointError)
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                }
+
                 HStack {
                     Text("Timeout")
                     TextField("Timeout", value: $localSettings.ollamaTimeout, format: .number)
@@ -331,10 +350,11 @@ struct SettingsView: View {
         modelListError = nil
         defer { isLoadingModels = false }
 
-        guard let url = URL(string: "\(localSettings.ollamaURL)/api/tags") else {
-            modelListError = "Invalid Ollama address"
+        guard let endpoint = localSettings.validatedOllamaEndpoint else {
+            modelListError = localSettings.ollamaEndpointError ?? "Invalid Ollama address"
             return
         }
+        let url = endpoint.baseURL.appendingPathComponent("api/tags")
 
         struct TagsResponse: Decodable {
             struct Model: Decodable { let name: String }
