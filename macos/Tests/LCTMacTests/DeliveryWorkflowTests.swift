@@ -41,10 +41,21 @@ final class DeliveryWorkflowTests: XCTestCase {
 
     func testDeliveryPipelineUsesExistingScriptsOnly() throws {
         let source = try workflowSource()
-        XCTAssertTrue(source.contains("package-app.sh"), "must package via Scripts/package-app.sh")
+        XCTAssertTrue(source.contains("./package-app.sh"), "package-app.sh lives at the macos root and must be invoked as ./package-app.sh")
+        XCTAssertFalse(source.contains("Scripts/package-app.sh"), "Scripts/package-app.sh does not exist")
         XCTAssertTrue(source.contains("create-dmg.sh"), "must build the DMG via Scripts/create-dmg.sh")
         XCTAssertTrue(source.contains("notarize-dmg.sh"), "must notarize and staple via Scripts/notarize-dmg.sh")
         XCTAssertTrue(source.contains("verify-release-dmg.sh"), "must Gatekeeper-verify via Scripts/verify-release-dmg.sh")
+    }
+
+    func testMacOsCompatibleTooling() throws {
+        let source = try workflowSource()
+        XCTAssertTrue(source.contains("base64 -D"), "macOS BSD base64 requires -D to decode")
+        XCTAssertFalse(source.contains("--decode"), "GNU-only base64 --decode fails on macOS runners")
+        XCTAssertTrue(
+            source.contains("'^[0-9]+\\.[0-9]+\\.[0-9]+$'"),
+            "release-version validation must enforce strict x.y.z (three nonempty numeric components)"
+        )
     }
 
     func testVersionSourcesAndArtifactContract() throws {
