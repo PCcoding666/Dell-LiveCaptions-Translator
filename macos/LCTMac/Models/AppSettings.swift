@@ -175,6 +175,10 @@ struct AppSettings: Codable, Equatable {
     var liveDraftTranslation: Bool = true
 
     // MARK: - History Settings
+    /// Opt-in consent to persist transcripts/translations to disk. Default
+    /// disabled: a missing key (existing installs predating consent) decodes
+    /// as false via the synthesized Codable default.
+    var historyEnabled: Bool = false
     var historyRetentionDays: Int = 30
     var historyMaxEntries: Int = 5000
 
@@ -283,6 +287,44 @@ struct AppSettings: Codable, Equatable {
         return defaultSettings
     }
 
+}
+
+// MARK: - Versioning-Tolerant Decoding
+
+extension AppSettings {
+    /// Decode with per-key defaults so settings saved by older versions
+    /// (missing newer keys) still load safely. A missing `historyEnabled`
+    /// key means no consent decision was ever recorded: decode as disabled.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        captureSystemAudio = try container.decodeIfPresent(Bool.self, forKey: .captureSystemAudio) ?? true
+        captureMicrophone = try container.decodeIfPresent(Bool.self, forKey: .captureMicrophone) ?? true
+        sourceLanguage = try container.decodeIfPresent(SourceLanguage.self, forKey: .sourceLanguage) ?? .english
+        ollamaHost = try container.decodeIfPresent(String.self, forKey: .ollamaHost) ?? "localhost"
+        ollamaPort = try container.decodeIfPresent(Int.self, forKey: .ollamaPort) ?? 11434
+        ollamaModel = try container.decodeIfPresent(String.self, forKey: .ollamaModel) ?? "qwen3.5:4b-mlx"
+        ollamaTimeout = try container.decodeIfPresent(Int.self, forKey: .ollamaTimeout) ?? 30
+        ollamaTemperature = try container.decodeIfPresent(Double.self, forKey: .ollamaTemperature) ?? 0.3
+        targetLanguage = try container.decodeIfPresent(TargetLanguage.self, forKey: .targetLanguage) ?? .chinese
+        translationModelType = try container.decodeIfPresent(TranslationModelType.self, forKey: .translationModelType) ?? .standard
+        contextAware = try container.decodeIfPresent(Bool.self, forKey: .contextAware) ?? true
+        maxContextEntries = try container.decodeIfPresent(Int.self, forKey: .maxContextEntries) ?? 5
+        customPrompt = try container.decodeIfPresent(String.self, forKey: .customPrompt) ?? ""
+        liveDraftTranslation = try container.decodeIfPresent(Bool.self, forKey: .liveDraftTranslation) ?? true
+        historyEnabled = try container.decodeIfPresent(Bool.self, forKey: .historyEnabled) ?? false
+        historyRetentionDays = try container.decodeIfPresent(Int.self, forKey: .historyRetentionDays) ?? 30
+        historyMaxEntries = try container.decodeIfPresent(Int.self, forKey: .historyMaxEntries) ?? 5000
+        overlayOpacity = try container.decodeIfPresent(Double.self, forKey: .overlayOpacity) ?? 0.85
+        overlayFontSize = try container.decodeIfPresent(Double.self, forKey: .overlayFontSize) ?? 14.0
+        showLatency = try container.decodeIfPresent(Bool.self, forKey: .showLatency) ?? true
+        maxDisplayCards = try container.decodeIfPresent(Int.self, forKey: .maxDisplayCards) ?? 5
+        overlayPositionX = try container.decodeIfPresent(Double.self, forKey: .overlayPositionX) ?? 0.0
+        overlayPositionY = try container.decodeIfPresent(Double.self, forKey: .overlayPositionY) ?? 0.0
+        overlayWidth = try container.decodeIfPresent(Double.self, forKey: .overlayWidth) ?? 400.0
+        overlayHeight = try container.decodeIfPresent(Double.self, forKey: .overlayHeight) ?? 200.0
+        overlayClickThrough = try container.decodeIfPresent(Bool.self, forKey: .overlayClickThrough) ?? false
+        overlayStayOnTop = try container.decodeIfPresent(Bool.self, forKey: .overlayStayOnTop) ?? true
+    }
 }
 
 // MARK: - Hex Color Extension

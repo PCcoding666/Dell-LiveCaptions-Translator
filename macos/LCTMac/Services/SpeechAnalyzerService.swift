@@ -233,7 +233,7 @@ class SpeechAnalyzerService: ObservableObject {
             appLog("[SpeechAnalyzerService] ⚠️ handleRecognitionResult called with nil result and nil error")
             return
         }
-        appLog("[SpeechAnalyzerService] 📝 Recognition result: isFinal=\(result.isFinal), text=\"\(result.bestTranscription.formattedString.prefix(80))\"")
+        appLog("[SpeechAnalyzerService] 📝 Recognition result: isFinal=\(result.isFinal), length=\(result.bestTranscription.formattedString.count)")
         
         let transcript = result.bestTranscription.formattedString
         

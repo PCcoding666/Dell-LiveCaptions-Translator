@@ -274,17 +274,26 @@ struct SettingsView: View {
             }
 
             DisclosureGroup("History") {
+                Toggle("Keep Translation History", isOn: $localSettings.historyEnabled)
+                    .help("Save transcripts and translations on this Mac (off by default)")
+
+                Text("History is off by default. When enabled, transcripts and translations are stored on this Mac only — never sent anywhere. Turning it off keeps existing entries but stops saving new ones.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
                 HStack {
                     Text("Retention")
                     Stepper("\(localSettings.historyRetentionDays) days", value: $localSettings.historyRetentionDays, in: 1...365)
                 }
                 .help("Automatically remove history entries older than this many days")
+                .disabled(!localSettings.historyEnabled)
 
                 HStack {
                     Text("Max Entries")
                     Stepper("\(localSettings.historyMaxEntries)", value: $localSettings.historyMaxEntries, in: 100...50000, step: 100)
                 }
                 .help("Keep only the newest history entries after each successful translation")
+                .disabled(!localSettings.historyEnabled)
             }
         }
     }
@@ -377,35 +386,29 @@ struct SettingsView: View {
         let screenStatus = CGPreflightScreenCaptureAccess()
 
         let guardian = OllamaGuardian.shared
+        let historyEntryCount = (try? HistoryService().getCount()) ?? 0
 
-        var lines: [String] = []
-        lines.append("LCT Diagnostics Report")
-        lines.append("Generated: \(Date().formatted(.iso8601))")
-        lines.append("")
-        lines.append("== App ==")
-        lines.append("Version: \(appVersion) (\(buildNumber))")
-        lines.append("macOS: \(osVersion)")
-        lines.append("")
-        lines.append("== Permissions ==")
-        lines.append("Microphone: \(describe(micStatus))")
-        lines.append("Speech Recognition: \(describe(speechStatus))")
-        lines.append("Screen Recording: \(screenStatus ? "granted" : "not granted")")
-        lines.append("")
-        lines.append("== Configuration ==")
-        lines.append("Ollama: \(localSettings.ollamaURL) (\(localSettings.isLocalOllama ? "local" : "remote"))")
-        lines.append("Model: \(localSettings.ollamaModel) [\(localSettings.translationModelType.displayName)]")
-        lines.append("Languages: \(localSettings.sourceLanguage.displayName) → \(localSettings.targetLanguage.displayName)")
-        lines.append("Capture: systemAudio=\(localSettings.captureSystemAudio) microphone=\(localSettings.captureMicrophone)")
-        lines.append("")
-        lines.append("== Ollama ==")
-        lines.append("Status: \(guardian.status.displayText)")
-        lines.append("Version: \(guardian.ollamaVersion ?? "unknown")")
-        lines.append("Installed models: \(installedModels.isEmpty ? "(none / unreachable)" : installedModels.joined(separator: ", "))")
-        lines.append("")
-        lines.append("== Recent Log ==")
-        lines.append(recentLogLines(count: 50))
-
-        return lines.joined(separator: "\n")
+        return DiagnosticsReport.build(
+            appVersion: appVersion,
+            buildNumber: buildNumber,
+            osVersion: osVersion,
+            microphoneStatus: describe(micStatus),
+            speechStatus: describe(speechStatus),
+            screenRecordingGranted: screenStatus,
+            ollamaURL: localSettings.ollamaURL,
+            ollamaIsLocal: localSettings.isLocalOllama,
+            modelName: localSettings.ollamaModel,
+            modelType: localSettings.translationModelType.displayName,
+            sourceLanguage: localSettings.sourceLanguage.displayName,
+            targetLanguage: localSettings.targetLanguage.displayName,
+            captureSystemAudio: localSettings.captureSystemAudio,
+            captureMicrophone: localSettings.captureMicrophone,
+            ollamaStatus: guardian.status.displayText,
+            ollamaVersion: guardian.ollamaVersion ?? "unknown",
+            installedModels: installedModels,
+            historyEnabled: localSettings.historyEnabled,
+            historyEntryCount: historyEntryCount
+        )
     }
 
     private func describe(_ status: AVAuthorizationStatus) -> String {
@@ -426,18 +429,6 @@ struct SettingsView: View {
         case .notDetermined: return "not determined"
         @unknown default: return "unknown"
         }
-    }
-
-    private func recentLogLines(count: Int) -> String {
-        let logURL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Logs/LCTMac.log")
-        guard let content = try? String(contentsOf: logURL, encoding: .utf8) else {
-            return "(log file not found)"
-        }
-        return content
-            .split(separator: "\n")
-            .suffix(count)
-            .joined(separator: "\n")
     }
 
     // MARK: - Helpers
