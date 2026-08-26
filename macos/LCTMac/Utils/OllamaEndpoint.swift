@@ -49,6 +49,31 @@ struct OllamaEndpoint: Equatable {
         return url
     }
 
+    /// Canonical loopback endpoint used for local Ollama by default.
+    static let local = OllamaEndpoint(host: "localhost", port: 11434, isLoopback: true)
+
+    /// Parse a raw URL into an endpoint, accepting only well-formed loopback
+    /// URLs. Remote endpoints are never derived from URLs; they must be built
+    /// from explicit host/port settings via `validated`. Returns nil for
+    /// anything malformed or non-loopback, so no request can be sent.
+    static func parsedLoopback(from urlString: String) -> OllamaEndpoint? {
+        guard let components = URLComponents(string: urlString),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              components.user == nil,
+              components.password == nil,
+              components.path.isEmpty,
+              components.query == nil,
+              components.fragment == nil,
+              let rawHost = components.host,
+              let port = components.port
+        else {
+            return nil
+        }
+
+        return try? validated(host: rawHost, port: port, remoteOptIn: false)
+    }
+
     /// Validate host/port/opt-in and return an endpoint, or throw
     /// `OllamaEndpointError`. Nothing here performs a network request.
     static func validated(host rawHost: String, port: Int, remoteOptIn: Bool) throws -> OllamaEndpoint {
