@@ -97,6 +97,27 @@ class SpeechAnalyzerService: ObservableObject {
         let recognizer = SFSpeechRecognizer(locale: language.locale)
         return recognizer?.isAvailable ?? false
     }
+
+    /// Whether on-device recognition is available for a locale. A missing
+    /// recognizer or missing on-device model both count as unavailable — we
+    /// never fall back to Apple's network recognition.
+    func isOnDeviceRecognitionAvailable(locale: Locale) -> Bool {
+        SFSpeechRecognizer(locale: locale)?.supportsOnDeviceRecognition ?? false
+    }
+
+    /// Build the only kind of recognition request this app ever uses:
+    /// on-device is required, so a request can never silently fall back to
+    /// Apple's network recognition.
+    func makeRecognitionRequest() -> SFSpeechAudioBufferRecognitionRequest {
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        request.shouldReportPartialResults = true
+        request.requiresOnDeviceRecognition = true
+
+        if #available(macOS 13.0, *) {
+            request.addsPunctuation = true
+        }
+        return request
+    }
     
     /// Get all available languages on this device
     func availableLanguages() -> [SourceLanguage] {
@@ -149,22 +170,23 @@ class SpeechAnalyzerService: ObservableObject {
             throw SpeechAnalyzerError.recognizerUnavailable
         }
         appLog("[SpeechAnalyzerService] Recognizer available: \(recognizer.isAvailable)")
-        
+
+        // On-device recognition is mandatory. Fail before any capture starts
+        // rather than silently sending audio to Apple's servers.
+        guard recognizer.supportsOnDeviceRecognition else {
+            lastError = "On-device speech recognition is not available for \(currentLanguage.displayName)."
+            appLog("[SpeechAnalyzerService] ❌ On-device recognition unavailable for \(currentLanguage.displayName)")
+            throw SpeechAnalyzerError.onDeviceRecognitionUnavailable
+        }
+
         // Stop any existing recognition
         // Stop any existing recognition
         appLog("[SpeechAnalyzerService] Stopping any existing recognition...")
         stop()
-        
+
         // Create new recognition request
-        appLog("[SpeechAnalyzerService] Creating recognition request...")
-        let request = SFSpeechAudioBufferRecognitionRequest()
-        request.shouldReportPartialResults = true
-        request.requiresOnDeviceRecognition = false // Allow network if needed for better quality
-        
-        // Configure for real-time transcription
-        if #available(macOS 13.0, *) {
-            request.addsPunctuation = true
-        }
+        appLog("[SpeechAnalyzerService] Creating on-device recognition request...")
+        let request = makeRecognitionRequest()
         
         // Log the native audio format expected by the recognizer
         let nativeFormat = request.nativeAudioFormat
@@ -308,12 +330,8 @@ class SpeechAnalyzerService: ObservableObject {
         // Create the NEW request BEFORE tearing down the old one.
         // This way, when we swap `recognitionRequest`, `appendAudioBuffer()` immediately
         // starts feeding buffers to the new request with no gap.
-        
-        let newRequest = SFSpeechAudioBufferRecognitionRequest()
-        newRequest.shouldReportPartialResults = true
-        if #available(macOS 13.0, *) {
-            newRequest.addsPunctuation = true
-        }
+
+        let newRequest = makeRecognitionRequest()
         
         // Capture old references before swapping
         let oldRequest = sharedState.request
@@ -344,14 +362,17 @@ class SpeechAnalyzerService: ObservableObject {
 enum SpeechAnalyzerError: Error, LocalizedError {
     case notAuthorized
     case recognizerUnavailable
+    case onDeviceRecognitionUnavailable
     case audioSessionFailed
-    
+
     var errorDescription: String? {
         switch self {
         case .notAuthorized:
             return "Speech recognition is not authorized"
         case .recognizerUnavailable:
             return "Speech recognizer is unavailable"
+        case .onDeviceRecognitionUnavailable:
+            return "On-device speech recognition is not available for this language. Download its on-device speech model in System Settings, or choose another language. LCT never sends audio to the network."
         case .audioSessionFailed:
             return "Failed to configure audio session"
         }

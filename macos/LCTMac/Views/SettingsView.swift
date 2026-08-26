@@ -108,7 +108,7 @@ struct SettingsView: View {
                 HStack {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
-                    Text("This language may not be available on your device")
+                    Text("This language has no on-device speech model on your Mac. Download it in System Settings, or choose another language. LCT only recognizes speech on-device.")
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
@@ -455,7 +455,9 @@ struct SettingsView: View {
 
     private func isLanguageAvailable(_ language: SourceLanguage) -> Bool {
         let locale = Locale(identifier: language.isoCode)
-        return SFSpeechRecognizer(locale: locale) != nil
+        // LCT requires on-device recognition, so availability means the
+        // on-device model is present — not just that a recognizer exists.
+        return SFSpeechRecognizer(locale: locale)?.supportsOnDeviceRecognition ?? false
     }
 }
 

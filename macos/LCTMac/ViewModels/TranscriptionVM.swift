@@ -358,6 +358,11 @@ class TranscriptionViewModel: ObservableObject {
                     "Speech recognition is unavailable for \(settings.sourceLanguage.displayName). Try another language.",
                     actions: [.openAppSettings]
                 )
+            case .onDeviceRecognitionUnavailable:
+                notice = .error(
+                    "On-device speech recognition is not available for \(settings.sourceLanguage.displayName). Download its on-device speech model in System Settings, or choose another language.",
+                    actions: [.openAppSettings]
+                )
             case .audioSessionFailed:
                 notice = .error("Failed to configure audio session.", actions: [.retryCapture])
             }
